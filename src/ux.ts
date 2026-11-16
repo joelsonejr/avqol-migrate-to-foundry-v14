@@ -3,7 +3,49 @@ import { libWrapper } from "./third-party/libwrapper-shim.js";
 import { CANONICAL_NAME, TEMPLATE_PATH, VoiceButton } from "./constants";
 import { debug } from "./debug";
 
+// Settings that hide core camera controls. Each one toggles a class on
+// <body>, and the stylesheet hides the matching buttons - so it keeps
+// working across camera re-renders and pop-outs without touching the DOM
+// that core owns.
+const CAMERA_CONTROL_SETTINGS: Record<string, { cssClass: string; label: string; default: boolean }> = {
+    disableHideUser: {
+        cssClass: "avqol-disable-hide-user",
+        label: "AVQOL.UserExperienceDisableHideUser",
+        default: true,
+    },
+    disablePopout: {
+        cssClass: "avqol-disable-popout",
+        label: "AVQOL.UserExperienceDisablePopout",
+        default: true,
+    },
+    disableBlockUserAV: {
+        cssClass: "avqol-disable-block-user-av",
+        label: "AVQOL.UserExperienceDisableBlockUserAV",
+        default: false,
+    },
+};
+
+const updateCameraControlClasses = () => {
+    for (const [key, { cssClass }] of Object.entries(CAMERA_CONTROL_SETTINGS)) {
+        const disabled = (game as Game).settings.get(CANONICAL_NAME, key) as boolean;
+        document.body.classList.toggle(cssClass, disabled);
+    }
+};
+
+Hooks.once("ready", updateCameraControlClasses);
+
 export const registerSettings = () => {
+    for (const [key, config] of Object.entries(CAMERA_CONTROL_SETTINGS)) {
+        (game as Game).settings.register(CANONICAL_NAME, key, {
+            name: config.label,
+            hint: `${config.label}Hint`,
+            scope: "world",
+            config: true,
+            default: config.default,
+            type: Boolean,
+            onChange: updateCameraControlClasses,
+        });
+    }
     (game as Game).settings.register(CANONICAL_NAME, "voiceButton", {
         name: (game as Game).i18n.localize("AVQOL.UserExperienceVoiceButton"),
         hint: (game as Game).i18n.localize(
@@ -106,7 +148,11 @@ const updatePushToTalkButtonBroadcasting = (
     );
 };
 
-Hooks.once("renderHotbar", async (_: any, html: JQuery<HTMLElement>) => {
+// Foundry v13+ rebuilt Hotbar on ApplicationV2, which hands render hooks a
+// native HTMLElement instead of a jQuery object. Wrap it once here so the
+// rest of this file's jQuery-based DOM handling keeps working unchanged.
+Hooks.once("renderHotbar", async (_: any, element: HTMLElement) => {
+    const html = $(element);
     if (getVoiceButton() === VoiceButton.ENHANCED) {
         libWrapper.register(
             CANONICAL_NAME,
@@ -138,7 +184,7 @@ Hooks.once("renderHotbar", async (_: any, html: JQuery<HTMLElement>) => {
             async (onSettingsChanged: any, ...args: any) => {
                 await renderPushToTalkButton(html);
                 updatePushToTalkButtonBroadcasting(html);
-                return onSettingsChanged(args);
+                return onSettingsChanged(...args);
             },
             "WRAPPER"
         );
