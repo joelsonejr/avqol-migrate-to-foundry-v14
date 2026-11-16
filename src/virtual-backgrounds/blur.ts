@@ -9,11 +9,23 @@ export const defaultOptions: VirtualBackgroundOptions = {
     blurRadius: 6,
 }
 
+// The slider level (3-10) is not used as a pixel radius directly. Each level
+// is multiplied by this factor and then scaled with the camera resolution
+// (relative to a 480p frame), so a level looks equally strong on a 480p and
+// on a 1080p camera instead of fading away as the resolution grows.
+const BLUR_PX_PER_LEVEL = 2.5;
+const BLUR_REFERENCE_HEIGHT = 480;
+
+// The background is blurred on a canvas this much smaller than the camera
+// frame. A blurred image carries no fine detail, so the result looks the
+// same while the (much larger) blur gets cheaper than before.
+const BLUR_DOWNSCALE = 0.5;
+
 export const renderOptions = (virtualBackgroundOptions: JQuery<HTMLElement>, data: Record<string, any>) => {
     const template = `
     <div class="form-group">
         <label for="blurRadius">{{localize 'AVQOL.VirtualBackgroundBlurBackgroundRadius'}}</label>
-        {{rangePicker name="virtualBackgroundOptions.blurRadius" value=blurRadius min=3 max=10 step=1}}
+        {{rangePicker name="virtualBackgroundOptions.blurRadius" value=(lookup this 'virtualBackgroundOptions.blurRadius') min=3 max=10 step=1}}
     </div>`
     virtualBackgroundOptions.append(Handlebars.compile(template)(data));
 }
@@ -73,6 +85,11 @@ const safariBlurBackground = (context, blurRadius = 8) => {
 
 export default (canvas: HTMLCanvasElement, options: VirtualBackgroundOptions) => {
     const ctx = canvas.getContext("2d");
+    // Reused across frames instead of allocating a canvas per frame.
+    const blurBackgroundCanvas = document.createElement('canvas');
+    const blurBackgroundCtx = blurBackgroundCanvas.getContext('2d');
+    // The value arrives as a string when it comes straight from the slider.
+    const blurLevel = Number(options.blurRadius) || defaultOptions.blurRadius;
     return async (results: ImageSegmenterResult, input: ImageBitmap, video: HTMLVideoElement) => {
         // get the canvas dimensions
         const canvasWidth = canvas.width;
@@ -107,17 +124,36 @@ export default (canvas: HTMLCanvasElement, options: VirtualBackgroundOptions) =>
 
         ctx.save();
 
-        const blurBackgroundCanvas = document.createElement('canvas');
-        blurBackgroundCanvas.width = videoWidth;
-        blurBackgroundCanvas.height = videoHeight;
-        const blurBackgroundCtx = blurBackgroundCanvas.getContext('2d');
+        const blurWidth = Math.max(1, Math.round(videoWidth * BLUR_DOWNSCALE));
+        const blurHeight = Math.max(1, Math.round(videoHeight * BLUR_DOWNSCALE));
+        if (blurBackgroundCanvas.width !== blurWidth || blurBackgroundCanvas.height !== blurHeight) {
+            blurBackgroundCanvas.width = blurWidth;
+            blurBackgroundCanvas.height = blurHeight;
+        }
         if (blurBackgroundCtx.filter) {
-            blurBackgroundCtx.filter = `blur(${options.blurRadius}px)`
-            blurBackgroundCtx.drawImage(input, 0, 0, videoWidth, videoHeight)
+            // Blur radius in pixels of the full camera frame, then of the
+            // downscaled canvas it is actually applied on.
+            const blurPx = blurLevel * BLUR_PX_PER_LEVEL * (videoHeight / BLUR_REFERENCE_HEIGHT);
+            const scaledBlurPx = blurPx * BLUR_DOWNSCALE;
+            // A canvas blur mixes the pixels near the border with the
+            // transparent area outside of it, which shows up as a dark
+            // vignette - more so the stronger the blur. Drawing the frame
+            // slightly oversized pushes that faded band off-canvas.
+            const overscan = scaledBlurPx * 2;
+            blurBackgroundCtx.filter = `blur(${scaledBlurPx}px)`
+            blurBackgroundCtx.drawImage(
+                input,
+                -overscan,
+                -overscan,
+                blurWidth + overscan * 2,
+                blurHeight + overscan * 2
+            )
         } else {
-            // Safari does not supported for filter property.
-            blurBackgroundCtx.drawImage(input, 0, 0, scaledWidth, scaledHeight)
-            safariBlurBackground(blurBackgroundCtx, options.blurRadius)
+            // Safari does not supported for filter property. This fallback
+            // costs O(radius^2) per pixel, so it keeps the raw slider level
+            // as its radius (on the downscaled canvas).
+            blurBackgroundCtx.drawImage(input, 0, 0, blurWidth, blurHeight)
+            safariBlurBackground(blurBackgroundCtx, blurLevel)
         }
 
         // draw the blur background on the canvas
