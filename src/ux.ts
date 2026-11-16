@@ -105,38 +105,34 @@ const activatePushToTalkButtonListeners = (
     }
 };
 
-const renderPushToTalkButton = async (hotbar: JQuery<HTMLElement>) => {
-    const container = hotbar.parent();
-    let pushToTalkButton = container.find("#avqol-pushtotalk");
+const getPushToTalkButton = (): JQuery<HTMLElement> => $("#avqol-pushtotalk");
+
+const renderPushToTalkButton = async () => {
+    let pushToTalkButton = getPushToTalkButton();
     if (pushToTalkButton.length > 0) {
         activatePushToTalkButtonListeners(pushToTalkButton);
         return;
     }
+    // Static part of Foundry's game view (not owned by any application), so
+    // the button survives re-renders of the scene controls and player list.
+    const container = $("#ui-left-column-1");
+    if (container.length === 0) {
+        return;
+    }
     debug("Rendering push to talk button");
-    container.addClass("avqol-pushtotalk__container");
     const template = await getTemplate(`${TEMPLATE_PATH}/pushtotalk.hbs`);
-    hotbar.after(template({}));
-    pushToTalkButton = container.find("#avqol-pushtotalk");
+    container.append(template({}));
+    pushToTalkButton = getPushToTalkButton();
 
     activatePushToTalkButtonListeners(pushToTalkButton);
 };
 
-const setPushToTalkButtonSpeaking = (
-    hotbar: JQuery<HTMLElement>,
-    speaking: boolean
-) => {
-    const pushToTalkButton = hotbar.parent().find("#avqol-pushtotalk");
-    if (pushToTalkButton.length === 0) {
-        return;
-    }
-    pushToTalkButton.toggleClass("avqol-pushtotalk--speaking", speaking);
+const setPushToTalkButtonSpeaking = (speaking: boolean) => {
+    getPushToTalkButton().toggleClass("avqol-pushtotalk--speaking", speaking);
 };
 
-const updatePushToTalkButtonBroadcasting = (
-    hotbar: JQuery<HTMLElement>,
-    intent: boolean = true
-) => {
-    const pushToTalkButton = hotbar.parent().find("#avqol-pushtotalk");
+const updatePushToTalkButtonBroadcasting = (intent: boolean = true) => {
+    const pushToTalkButton = getPushToTalkButton();
     if (pushToTalkButton.length === 0) {
         return;
     }
@@ -148,11 +144,9 @@ const updatePushToTalkButtonBroadcasting = (
     );
 };
 
-// Foundry v13+ rebuilt Hotbar on ApplicationV2, which hands render hooks a
-// native HTMLElement instead of a jQuery object. Wrap it once here so the
-// rest of this file's jQuery-based DOM handling keeps working unchanged.
-Hooks.once("renderHotbar", async (_: any, element: HTMLElement) => {
-    const html = $(element);
+// The hotbar is only used as a signal that Foundry's interface has been
+// drawn; the button itself lives in the left column.
+Hooks.once("renderHotbar", async () => {
     if (getVoiceButton() === VoiceButton.ENHANCED) {
         libWrapper.register(
             CANONICAL_NAME,
@@ -163,7 +157,7 @@ Hooks.once("renderHotbar", async (_: any, element: HTMLElement) => {
                 speaking: boolean
             ) => {
                 if (userId === (game as Game).userId) {
-                    setPushToTalkButtonSpeaking(html, speaking);
+                    setPushToTalkButtonSpeaking(speaking);
                 }
                 return setUserIsSpeaking(userId, speaking);
             },
@@ -173,7 +167,7 @@ Hooks.once("renderHotbar", async (_: any, element: HTMLElement) => {
             CANONICAL_NAME,
             "AVMaster.prototype.broadcast",
             async (broadcast: any, intent: boolean) => {
-                updatePushToTalkButtonBroadcasting(html, intent);
+                updatePushToTalkButtonBroadcasting(intent);
                 return broadcast(intent);
             },
             "WRAPPER"
@@ -182,12 +176,12 @@ Hooks.once("renderHotbar", async (_: any, element: HTMLElement) => {
             CANONICAL_NAME,
             "AVMaster.prototype.onSettingsChanged",
             async (onSettingsChanged: any, ...args: any) => {
-                await renderPushToTalkButton(html);
-                updatePushToTalkButtonBroadcasting(html);
+                await renderPushToTalkButton();
+                updatePushToTalkButtonBroadcasting();
                 return onSettingsChanged(...args);
             },
             "WRAPPER"
         );
-        await renderPushToTalkButton(html);
+        await renderPushToTalkButton();
     }
 });
